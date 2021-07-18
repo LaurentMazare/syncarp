@@ -123,7 +123,7 @@ async fn read_bin_prot<T: BinProtRead, R: AsyncReadExt + Unpin>(
 
 async fn write_with_size(
     w: &mut Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
-    buf: &Vec<u8>,
+    buf: &[u8],
 ) -> std::io::Result<()> {
     let mut w = w.lock().await;
     let len = buf.len() as i64;
