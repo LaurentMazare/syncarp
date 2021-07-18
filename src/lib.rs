@@ -126,7 +126,7 @@ async fn write_bin_prot<T: BinProtWrite>(
 ) -> std::io::Result<()> {
     let len = v.binprot_size() as i64;
     s.write_all(&len.to_le_bytes()).await?;
-    buf.resize(0, 0u8);
+    buf.clear();
     v.binprot_write(buf)?;
     s.write_all(&buf).await?;
     Ok(())
@@ -219,7 +219,7 @@ impl RpcServer {
         write_bin_prot(&mut stream, &Handshake(vec![RPC_MAGIC_NUMBER, 1]), &mut buf).await?;
         let handshake: Handshake = read_bin_prot(&mut stream, &mut buf).await?;
         tracing::debug!("Handshake: {:?}", handshake);
-        if handshake.0.len() == 0 {
+        if handshake.0.is_empty() {
             return Err(error::Error::NoMagicNumberInHandshake);
         }
         if handshake.0[0] != RPC_MAGIC_NUMBER {

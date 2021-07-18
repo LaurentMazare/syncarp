@@ -30,7 +30,7 @@ impl syncarp::JRpcImpl for GetUniqueIdImpl {
 async fn main() -> Result<(), syncarp::Error> {
     let get_unique_id_impl = GetUniqueIdImpl(Mutex::new(0));
     syncarp::RpcServer::new()
-        .add_rpc("get-unique-id", get_unique_id_impl)
+        .add_rpc("get-unique-id", /*version=*/0, get_unique_id_impl)
         .start("127.0.0.1:8080")
         .await?;
     Ok(())
