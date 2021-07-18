@@ -1,11 +1,10 @@
 // RPC Client and cerver compatible with https://github.com/janestreet/async_rpc_kernel
-// RPC magic number 4_411_474
 
 // TODO: Pre-allocate buffers or switch to BufReader/BufWriter + handling async in binprot
-// TODO: Specific error type.
 // TODO: Handle heartbeating.
-// TODO: Handle the RPC Version.
 // TODO: Make a RpcClient.
+mod error;
+
 use async_trait::async_trait;
 use binprot::{BinProtRead, BinProtSize, BinProtWrite};
 use binprot_derive::{BinProtRead, BinProtWrite};
@@ -13,6 +12,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+
+pub use crate::error::Error;
+
+const RPC_MAGIC_NUMBER: i64 = 4_411_474;
 
 #[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
 struct Handshake(Vec<i64>);
@@ -22,8 +25,6 @@ enum Sexp {
     Atom(String),
     List(Vec<Sexp>),
 }
-
-pub type Error = binprot::Error;
 
 // Dummy formatter, escaping is not handled properly.
 impl std::fmt::Debug for Sexp {
@@ -107,24 +108,26 @@ enum ServerMessage<R> {
     Response(R),
 }
 
-async fn read_bin_prot<T: BinProtRead>(s: &mut TcpStream) -> Result<T, Error> {
+async fn read_bin_prot<T: BinProtRead>(s: &mut TcpStream, buf: &mut Vec<u8>) -> Result<T, Error> {
     let mut recv_bytes = [0u8; 8];
     s.read_exact(&mut recv_bytes).await?;
     let recv_len = i64::from_le_bytes(recv_bytes);
-    // TODO: pre-allocate the buffer or use a BufReader
-    let mut buf = vec![0u8; recv_len as usize];
-    s.read_exact(&mut buf).await?;
+    buf.resize(recv_len as usize, 0u8);
+    s.read_exact(buf).await?;
     let mut slice = buf.as_slice();
     let data = T::binprot_read(&mut slice)?;
     Ok(data)
 }
 
-async fn write_bin_prot<T: BinProtWrite>(s: &mut TcpStream, v: &T) -> std::io::Result<()> {
+async fn write_bin_prot<T: BinProtWrite>(
+    s: &mut TcpStream,
+    v: &T,
+    buf: &mut Vec<u8>,
+) -> std::io::Result<()> {
     let len = v.binprot_size() as i64;
     s.write_all(&len.to_le_bytes()).await?;
-    // TODO: pre-allocate the buffer or use a BufWriter
-    let mut buf = vec![];
-    v.binprot_write(&mut buf)?;
+    buf.resize(0, 0u8);
+    v.binprot_write(buf)?;
     s.write_all(&buf).await?;
     Ok(())
 }
@@ -144,14 +147,10 @@ trait ErasedJRpcImpl {
         stream: &mut TcpStream,
         id: i64,
         mut payload: &[u8],
+        buf: &mut Vec<u8>,
     ) -> Result<(), Error>;
 }
 
-//impl<Q, R, E> ErasedJRpcImpl for dyn JRpcImpl<Q = Q, R = R, E = E>
-//where
-//   Q: BinProtRead,
-//    R: BinProtWrite,
-//    E: std::error::Error,
 #[async_trait]
 impl<T> ErasedJRpcImpl for T
 where
@@ -165,6 +164,7 @@ where
         s: &mut TcpStream,
         id: i64,
         mut payload: &[u8],
+        buf: &mut Vec<u8>,
     ) -> Result<(), Error> {
         let query = T::Q::binprot_read(&mut payload)?;
         let rpc_result = match self.rpc_impl(query) {
@@ -178,13 +178,13 @@ where
             id,
             data: rpc_result,
         };
-        write_bin_prot(s, &ServerMessage::Response(response)).await?;
+        write_bin_prot(s, &ServerMessage::Response(response), buf).await?;
         Ok(())
     }
 }
 
 pub struct RpcServer {
-    rpc_impls: BTreeMap<String, Box<dyn ErasedJRpcImpl + Send + Sync>>,
+    rpc_impls: BTreeMap<(String, i64), Box<dyn ErasedJRpcImpl + Send + Sync>>,
 }
 
 impl RpcServer {
@@ -194,7 +194,7 @@ impl RpcServer {
         }
     }
 
-    pub fn add_rpc<T: 'static>(mut self, rpc_name: &str, impl_: T) -> Self
+    pub fn add_rpc<T: 'static>(mut self, rpc_name: &str, rpc_version: i64, impl_: T) -> Self
     where
         T: JRpcImpl + Send + Sync,
         T::Q: BinProtRead + Send + Sync,
@@ -202,7 +202,8 @@ impl RpcServer {
         T::E: std::error::Error + Send,
     {
         let impl_: Box<dyn ErasedJRpcImpl + Send + Sync> = Box::new(impl_);
-        self.rpc_impls.insert(rpc_name.to_string(), impl_);
+        self.rpc_impls
+            .insert((rpc_name.to_string(), rpc_version), impl_);
         self
     }
 
@@ -212,13 +213,20 @@ impl RpcServer {
         addr: std::net::SocketAddr,
     ) -> Result<(), Error> {
         tracing::debug!("accepted connection {:?}", addr);
-        write_bin_prot(&mut stream, &Handshake(vec![4411474, 1])).await?;
-        let handshake: Handshake = read_bin_prot(&mut stream).await?;
-        tracing::debug!("Handshake: {:?}", handshake);
-
-        let mut recv_bytes = [0u8; 8];
         // TODO: use a BufReader
         let mut buf = vec![0u8; 128];
+        let mut buf2 = vec![0u8; 128];
+        write_bin_prot(&mut stream, &Handshake(vec![RPC_MAGIC_NUMBER, 1]), &mut buf).await?;
+        let handshake: Handshake = read_bin_prot(&mut stream, &mut buf).await?;
+        tracing::debug!("Handshake: {:?}", handshake);
+        if handshake.0.len() == 0 {
+            return Err(error::Error::NoMagicNumberInHandshake);
+        }
+        if handshake.0[0] != RPC_MAGIC_NUMBER {
+            return Err(error::Error::UnexpectedMagicNumber(handshake.0[0]));
+        }
+
+        let mut recv_bytes = [0u8; 8];
 
         loop {
             match stream.read_exact(&mut recv_bytes).await {
@@ -237,26 +245,32 @@ impl RpcServer {
             tracing::debug!("Received: {:?}", msg);
             match msg {
                 ServerMessage::Heartbeat => {}
-                ServerMessage::Query(query) => match self.rpc_impls.get(&query.rpc_tag) {
-                    None => {
-                        let err = RpcError::UnimplementedRpc((
-                            query.rpc_tag,
-                            Version::Version(query.version),
-                        ));
-                        let message = ServerMessage::Response(Response::<()> {
-                            id: query.id,
-                            data: RpcResult::Error(err),
-                        });
-                        write_bin_prot(&mut stream, &message).await?
+                ServerMessage::Query(q) => {
+                    let rpc_key = (q.rpc_tag, q.version);
+                    match self.rpc_impls.get(&rpc_key) {
+                        None => {
+                            let err = RpcError::UnimplementedRpc((
+                                rpc_key.0,
+                                Version::Version(rpc_key.1),
+                            ));
+                            let message = ServerMessage::Response(Response::<()> {
+                                id: q.id,
+                                data: RpcResult::Error(err),
+                            });
+                            write_bin_prot(&mut stream, &message, &mut buf).await?
+                        }
+                        Some(r) => {
+                            let payload_len = q.data.0 as i64;
+                            if payload_len < 0 {
+                                return Err(Error::IncorrectPayloadLength(payload_len));
+                            }
+                            let payload_offset = recv_len - payload_len;
+                            let payload = &mut buf.as_mut_slice()[payload_offset as usize..];
+                            let future = r.erased_rpc_impl(&mut stream, q.id, payload, &mut buf2);
+                            future.await?
+                        }
                     }
-                    Some(r) => {
-                        // TODO: test query_data.0, and have a dedicated error.
-                        let payload_offset = recv_len - (query.data.0 as i64);
-                        let payload = &mut buf.as_mut_slice()[payload_offset as usize..];
-                        let future = r.erased_rpc_impl(&mut stream, query.id, payload);
-                        future.await?
-                    }
-                },
+                }
                 ServerMessage::Response(()) => unimplemented!(),
             };
         }
