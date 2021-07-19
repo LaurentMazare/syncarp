@@ -318,3 +318,24 @@ impl Default for RpcServer {
         Self::new()
     }
 }
+
+pub struct RpcClient {
+    pub r: tokio::net::tcp::OwnedReadHalf,
+    pub w: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+    pub buf: Vec<u8>,
+}
+
+impl RpcClient {
+    pub async fn new<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<Self, Error> {
+        let stream = TcpStream::connect(addr).await?;
+        let (mut r, w) = stream.into_split();
+        let mut w = Arc::new(Mutex::new(w));
+        let mut buf = vec![0u8; 128];
+        let handshake: Handshake = read_bin_prot(&mut r, &mut buf).await?;
+        tracing::debug!("Handshake: {:?}", handshake);
+        write_bin_prot(&mut w, &Handshake(vec![RPC_MAGIC_NUMBER, 1]), &mut buf).await?;
+
+        spawn_heartbeat_thread(w.clone());
+        Ok(RpcClient { r, w, buf })
+    }
+}
