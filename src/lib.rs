@@ -122,7 +122,7 @@ async fn read_bin_prot<T: BinProtRead, R: AsyncReadExt + Unpin>(
 }
 
 async fn write_with_size(
-    w: &mut Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+    w: &Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
     buf: &[u8],
 ) -> std::io::Result<()> {
     let mut w = w.lock().await;
@@ -133,7 +133,7 @@ async fn write_with_size(
 }
 
 async fn write_bin_prot<T: BinProtWrite>(
-    w: &mut Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+    w: &Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
     v: &T,
     buf: &mut Vec<u8>,
 ) -> std::io::Result<()> {
@@ -288,7 +288,7 @@ impl RpcServer {
                             let payload = &mut buf.as_mut_slice()[payload_offset as usize..];
                             buf2.clear();
                             r.erased_rpc_impl(q.id, payload, &mut buf2)?;
-                            write_with_size(&mut write, &buf2).await?;
+                            write_with_size(&write, &buf2).await?;
                         }
                     }
                 }
@@ -337,5 +337,14 @@ impl RpcClient {
 
         spawn_heartbeat_thread(w.clone());
         Ok(RpcClient { r, w, buf })
+    }
+
+    pub async fn dispatch<Q, R>(&self, _q: &Q) -> Result<Q, Error>
+    where
+        Q: BinProtWrite + Send + Sync,
+        R: BinProtRead + Send + Sync,
+    {
+        write_with_size(&self.w, &self.buf).await?;
+        unimplemented!()
     }
 }
