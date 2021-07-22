@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Mutex;
+use tokio::sync::{oneshot, Mutex};
 
 pub use crate::error::Error;
 
@@ -319,10 +319,18 @@ impl Default for RpcServer {
     }
 }
 
+#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
+enum ClientMessage<Q, R> {
+    Heartbeat,
+    Query(Query<Q>),
+    Response(R),
+}
+
 pub struct RpcClient {
     pub r: tokio::net::tcp::OwnedReadHalf,
     pub w: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
     pub buf: Vec<u8>,
+    pub counter: std::sync::Mutex<i64>,
 }
 
 impl RpcClient {
@@ -335,16 +343,31 @@ impl RpcClient {
         tracing::debug!("Handshake: {:?}", handshake);
         write_bin_prot(&mut w, &Handshake(vec![RPC_MAGIC_NUMBER, 1]), &mut buf).await?;
 
+        let counter = std::sync::Mutex::new(0);
         spawn_heartbeat_thread(w.clone());
-        Ok(RpcClient { r, w, buf })
+        Ok(RpcClient { r, w, buf, counter })
     }
 
-    pub async fn dispatch<Q, R>(&self, _q: &Q) -> Result<Q, Error>
+    pub fn get_id(&mut self) -> i64 {
+        let mut counter = self.counter.lock().unwrap();
+        let res = *counter;
+        *counter += 1;
+        res
+    }
+
+    pub async fn dispatch<Q, R>(&mut self, rpc_tag: String, version: i64, q: Q) -> Result<Q, Error>
     where
         Q: BinProtWrite + Send + Sync,
         R: BinProtRead + Send + Sync,
     {
-        write_with_size(&self.w, &self.buf).await?;
+        let id = self.get_id();
+        let message = ClientMessage::Query::<Q, ()>(Query::<Q> {
+            rpc_tag,
+            version,
+            id,
+            data: binprot::WithLen(q),
+        });
+        write_bin_prot(&self.w, &message, &mut self.buf).await?;
         unimplemented!()
     }
 }
