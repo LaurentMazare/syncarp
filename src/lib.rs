@@ -1,7 +1,6 @@
 // RPC Client and cerver compatible with https://github.com/janestreet/async_rpc_kernel
 
 // TODO: Pre-allocate buffers or switch to BufReader/BufWriter + handling async in binprot
-// TODO: Make a RpcClient.
 mod error;
 
 use binprot::{BinProtRead, BinProtWrite};
@@ -10,7 +9,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::Mutex;
 
 pub use crate::error::Error;
 
@@ -320,14 +319,25 @@ impl Default for RpcServer {
 }
 
 #[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
-enum ClientMessage<Q, R> {
+enum ClientRpcResult {
+    Ok(binprot::Nat0),
+    Error(RpcError),
+}
+
+#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
+struct ClientResponse {
+    id: i64,
+    data: ClientRpcResult,
+}
+
+#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
+enum ClientMessage<Q> {
     Heartbeat,
     Query(Query<Q>),
-    Response(R),
+    ClientResponse,
 }
 
 pub struct RpcClient {
-    pub r: tokio::net::tcp::OwnedReadHalf,
     pub w: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
     pub buf: Vec<u8>,
     pub counter: std::sync::Mutex<i64>,
@@ -345,7 +355,37 @@ impl RpcClient {
 
         let counter = std::sync::Mutex::new(0);
         spawn_heartbeat_thread(w.clone());
-        Ok(RpcClient { r, w, buf, counter })
+
+        let mut recv_bytes = [0u8; 8];
+        tokio::spawn(async move {
+            loop {
+                match r.read_exact(&mut recv_bytes).await {
+                    Ok(_) => {}
+                    Err(err) => {
+                        tracing::error!("socket read error: {:?}", err);
+                        break;
+                    }
+                };
+                let recv_len = i64::from_le_bytes(recv_bytes);
+                buf.resize(recv_len as usize, 0u8);
+                // This reads both the ClientMessage and the payload.
+                if let Err(err) = r.read_exact(&mut buf).await {
+                    tracing::error!("socket read error: {:?}", err);
+                    break;
+                }
+                let mut slice = buf.as_slice();
+                let msg = match ClientMessage::<()>::binprot_read(&mut slice) {
+                    Err(err) => {
+                        tracing::error!("unexpected message format: {:?}", err);
+                        break;
+                    }
+                    Ok(msg) => msg,
+                };
+                tracing::debug!("Client received: {:?}", msg);
+            }
+        });
+        let buf = vec![0u8; 128];
+        Ok(RpcClient { w, buf, counter })
     }
 
     pub fn get_id(&mut self) -> i64 {
@@ -361,7 +401,7 @@ impl RpcClient {
         R: BinProtRead + Send + Sync,
     {
         let id = self.get_id();
-        let message = ClientMessage::Query::<Q, ()>(Query::<Q> {
+        let message = ClientMessage::Query(Query::<Q> {
             rpc_tag,
             version,
             id,
