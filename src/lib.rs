@@ -355,7 +355,7 @@ pub trait Rpc {
     type Q; // Query
     type R; // Response
 
-    const RPC_NAME: String;
+    const RPC_NAME: &'static str;
     const RPC_VERSION: i64;
 
     async fn dispatch(rpc_client: &mut RpcClient, q: Self::Q) -> Result<Self::R, Error>
