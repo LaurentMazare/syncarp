@@ -28,8 +28,7 @@ async fn read_bin_prot<T: BinProtRead, R: AsyncReadExt + Unpin>(
     let recv_len = i64::from_le_bytes(recv_bytes);
     buf.resize(recv_len as usize, 0u8);
     r.read_exact(buf).await?;
-    let mut slice = buf.as_slice();
-    let data = T::binprot_read(&mut slice)?;
+    let data = T::binprot_read(&mut buf.as_slice())?;
     Ok(data)
 }
 
@@ -149,31 +148,28 @@ impl RpcServer {
         let mut buf2 = vec![0u8; 128];
         write_bin_prot(&write, &Handshake(vec![RPC_MAGIC_NUMBER, 1]), &mut buf).await?;
         let handshake: Handshake = read_bin_prot(&mut read, &mut buf).await?;
-        tracing::debug!("Handshake: {:?}", handshake);
+        tracing::debug!("handshake: {:?}", handshake);
         if handshake.0.is_empty() {
-            return Err(error::Error::NoMagicNumberInHandshake);
+            return Err(Error::NoMagicNumberInHandshake);
         }
         if handshake.0[0] != RPC_MAGIC_NUMBER {
-            return Err(error::Error::UnexpectedMagicNumber(handshake.0[0]));
+            return Err(Error::UnexpectedMagicNumber(handshake.0[0]));
         }
 
         let mut recv_bytes = [0u8; 8];
         spawn_heartbeat_thread(write.clone());
 
         loop {
-            match read.read_exact(&mut recv_bytes).await {
-                Ok(_) => {}
-                Err(err) => match err.kind() {
+            if let Err(err) = read.read_exact(&mut recv_bytes).await {
+                match err.kind() {
                     std::io::ErrorKind::UnexpectedEof => return Ok(()),
                     _ => return Err(err.into()),
-                },
+                }
             };
             let recv_len = i64::from_le_bytes(recv_bytes);
             buf.resize(recv_len as usize, 0u8);
-            // This reads both the ServerMessage and the payload.
             read.read_exact(&mut buf).await?;
-            let mut slice = buf.as_slice();
-            let msg = ServerMessage::binprot_read(&mut slice)?;
+            let msg = ServerMessage::binprot_read(&mut buf.as_slice())?;
             tracing::debug!("Received: {:?}", msg);
             match msg {
                 ServerMessage::Heartbeat => {}
@@ -249,63 +245,51 @@ impl RpcClient {
         let id_and_oneshots = Arc::new(Mutex::new((0i64, oneshots)));
         spawn_heartbeat_thread(w.clone());
 
-        let mut recv_bytes = [0u8; 8];
         let id_and_os = id_and_oneshots.clone();
         tokio::spawn(async move {
+            let mut buf = vec![0u8; 128];
+            let mut recv_bytes = [0u8; 8];
             loop {
-                match r.read_exact(&mut recv_bytes).await {
-                    Ok(_) => {}
-                    Err(err) => {
-                        tracing::error!("socket read error: {:?}", err);
-                        break;
-                    }
+                if let Err(err) = r.read_exact(&mut recv_bytes).await {
+                    tracing::error!("socket read error: {:?}", err);
+                    break;
                 };
                 let recv_len = i64::from_le_bytes(recv_bytes);
                 buf.resize(recv_len as usize, 0u8);
-                // This reads both the ClientMessage and the payload.
                 if let Err(err) = r.read_exact(&mut buf).await {
                     tracing::error!("socket read error: {:?}", err);
                     break;
                 }
-                let mut slice = buf.as_slice();
-                let msg = match ClientMessage::<String, ()>::binprot_read(&mut slice) {
+                let msg = match ClientMessage::<String, ()>::binprot_read(&mut buf.as_slice()) {
                     Err(err) => {
                         tracing::error!("unexpected message format: {:?}", err);
                         break;
                     }
                     Ok(msg) => msg,
                 };
-                tracing::debug!("Client received: {:?}", msg);
+                tracing::debug!("client received: {:?}", msg);
                 match msg {
                     ClientMessage::Heartbeat => {}
                     ClientMessage::Query(_) => {
                         tracing::error!("client received an unexpected query");
                     }
-                    ClientMessage::ClientResponse(response) => {
+                    ClientMessage::ClientResponse(resp) => {
                         let mut id_and_oneshots = id_and_os.lock().await;
                         let (_id, oneshots) = &mut *id_and_oneshots;
-                        match oneshots.remove(&response.id) {
+                        match oneshots.remove(&resp.id) {
                             None => {
-                                tracing::debug!(
-                                    "Client received an unexpected id: {}",
-                                    response.id
-                                );
+                                tracing::error!("client received an unexpected id: {}", resp.id);
                             }
-                            Some(tx) => match tx.send(response.data) {
-                                Ok(()) => {}
-                                Err(err) => {
-                                    tracing::debug!(
-                                        "Client cannot communicate with original thread: {:?}",
-                                        err
-                                    )
+                            Some(tx) => {
+                                if let Err(err) = tx.send(resp.data) {
+                                    tracing::error!("client tx error: {:?}", err)
                                 }
-                            },
+                            }
                         }
                     }
                 }
             }
         });
-        let buf = vec![0u8; 128];
         Ok(RpcClient {
             w,
             buf,
@@ -341,8 +325,7 @@ impl RpcClient {
         let rpc_result = rx.await?;
         match rpc_result {
             ClientRpcResult::Ok(buffer_with_len) => {
-                let mut slice = buffer_with_len.0.as_slice();
-                let result = R::binprot_read(&mut slice)?;
+                let result = R::binprot_read(&mut buffer_with_len.0.as_slice())?;
                 Ok(result)
             }
             ClientRpcResult::Error(err) => Err(err.into()),
