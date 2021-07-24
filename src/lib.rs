@@ -183,13 +183,13 @@ pub struct RpcServer {
     rpc_impls: BTreeMap<(String, i64), Box<dyn ErasedJRpcImpl + Send + Sync>>,
 }
 
-fn spawn_heartbeat_thread(mut s: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>) {
+fn spawn_heartbeat_thread(s: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>) {
     tokio::spawn(async move {
         let mut buf = vec![0u8; 64];
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
             tracing::debug!("heartbeating");
-            let res = write_bin_prot(&mut s, &ServerMessage::Heartbeat::<()>, &mut buf).await;
+            let res = write_bin_prot(&s, &ServerMessage::Heartbeat::<()>, &mut buf).await;
             if let Err(error) = res {
                 match error.kind() {
                     std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::UnexpectedEof => break,
@@ -230,11 +230,11 @@ impl RpcServer {
     ) -> Result<(), Error> {
         tracing::debug!("accepted connection {:?}", addr);
         let (mut read, write) = stream.into_split();
-        let mut write = Arc::new(Mutex::new(write));
+        let write = Arc::new(Mutex::new(write));
         // TODO: use a BufReader
         let mut buf = vec![0u8; 128];
         let mut buf2 = vec![0u8; 128];
-        write_bin_prot(&mut write, &Handshake(vec![RPC_MAGIC_NUMBER, 1]), &mut buf).await?;
+        write_bin_prot(&write, &Handshake(vec![RPC_MAGIC_NUMBER, 1]), &mut buf).await?;
         let handshake: Handshake = read_bin_prot(&mut read, &mut buf).await?;
         tracing::debug!("Handshake: {:?}", handshake);
         if handshake.0.is_empty() {
@@ -276,7 +276,7 @@ impl RpcServer {
                                 id: q.id,
                                 data: RpcResult::Error(err),
                             });
-                            write_bin_prot(&mut write, &message, &mut buf).await?
+                            write_bin_prot(&write, &message, &mut buf).await?
                         }
                         Some(r) => {
                             let payload_len = q.data.0 as i64;
@@ -347,11 +347,11 @@ impl RpcClient {
     pub async fn new<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<Self, Error> {
         let stream = TcpStream::connect(addr).await?;
         let (mut r, w) = stream.into_split();
-        let mut w = Arc::new(Mutex::new(w));
+        let w = Arc::new(Mutex::new(w));
         let mut buf = vec![0u8; 128];
         let handshake: Handshake = read_bin_prot(&mut r, &mut buf).await?;
         tracing::debug!("Handshake: {:?}", handshake);
-        write_bin_prot(&mut w, &Handshake(vec![RPC_MAGIC_NUMBER, 1]), &mut buf).await?;
+        write_bin_prot(&w, &Handshake(vec![RPC_MAGIC_NUMBER, 1]), &mut buf).await?;
 
         let counter = std::sync::Mutex::new(0);
         spawn_heartbeat_thread(w.clone());
