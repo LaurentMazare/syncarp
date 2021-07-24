@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Mutex;
+use tokio::sync::{oneshot, Mutex};
 
 pub use crate::error::Error;
 
@@ -318,9 +318,33 @@ impl Default for RpcServer {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct BufferWithLen(Vec<u8>);
+
+impl BinProtRead for BufferWithLen {
+    fn binprot_read<R: std::io::Read + ?Sized>(r: &mut R) -> Result<Self, binprot::Error>
+    where
+        Self: Sized,
+    {
+        let len = binprot::Nat0::binprot_read(r)?;
+        let mut buf: Vec<u8> = vec![0u8; len.0 as usize];
+        r.read_exact(&mut buf)?;
+        Ok(BufferWithLen(buf))
+    }
+}
+
+impl BinProtWrite for BufferWithLen {
+    fn binprot_write<W: std::io::Write>(&self, w: &mut W) -> Result<(), std::io::Error> {
+        let nat0 = binprot::Nat0(self.0.len() as u64);
+        nat0.binprot_write(w)?;
+        w.write_all(&self.0)?;
+        Ok(())
+    }
+}
+
 #[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
 enum ClientRpcResult {
-    Ok(binprot::Nat0),
+    Ok(BufferWithLen),
     Error(RpcError),
 }
 
@@ -334,13 +358,15 @@ struct ClientResponse {
 enum ClientMessage<Q> {
     Heartbeat,
     Query(Query<Q>),
-    ClientResponse,
+    ClientResponse(ClientResponse),
 }
 
+type OneShots = BTreeMap<i64, oneshot::Sender<ClientRpcResult>>;
+
 pub struct RpcClient {
-    pub w: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
-    pub buf: Vec<u8>,
-    pub counter: std::sync::Mutex<i64>,
+    w: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+    buf: Vec<u8>,
+    id_and_oneshots: Arc<Mutex<(i64, OneShots)>>,
 }
 
 impl RpcClient {
@@ -353,10 +379,12 @@ impl RpcClient {
         tracing::debug!("Handshake: {:?}", handshake);
         write_bin_prot(&w, &Handshake(vec![RPC_MAGIC_NUMBER, 1]), &mut buf).await?;
 
-        let counter = std::sync::Mutex::new(0);
+        let oneshots: OneShots = BTreeMap::new();
+        let id_and_oneshots = Arc::new(Mutex::new((0i64, oneshots)));
         spawn_heartbeat_thread(w.clone());
 
         let mut recv_bytes = [0u8; 8];
+        let id_and_os = id_and_oneshots.clone();
         tokio::spawn(async move {
             loop {
                 match r.read_exact(&mut recv_bytes).await {
@@ -382,25 +410,59 @@ impl RpcClient {
                     Ok(msg) => msg,
                 };
                 tracing::debug!("Client received: {:?}", msg);
+                match msg {
+                    ClientMessage::Heartbeat => {}
+                    ClientMessage::Query(_) => {}
+                    ClientMessage::ClientResponse(response) => {
+                        let mut id_and_oneshots = id_and_os.lock().await;
+                        let (_id, oneshots) = &mut *id_and_oneshots;
+                        match oneshots.remove(&response.id) {
+                            None => {
+                                tracing::debug!(
+                                    "Client received an unexpected id: {}",
+                                    response.id
+                                );
+                            }
+                            Some(tx) => match tx.send(response.data) {
+                                Ok(()) => {}
+                                Err(err) => {
+                                    tracing::debug!(
+                                        "Client cannot communicate with original thread: {:?}",
+                                        err
+                                    )
+                                }
+                            },
+                        }
+                    }
+                }
             }
         });
         let buf = vec![0u8; 128];
-        Ok(RpcClient { w, buf, counter })
+        Ok(RpcClient {
+            w,
+            buf,
+            id_and_oneshots,
+        })
     }
 
-    pub fn get_id(&mut self) -> i64 {
-        let mut counter = self.counter.lock().unwrap();
-        let res = *counter;
-        *counter += 1;
-        res
+    // Registers a fresh id and get back both the id and the
+    // reader.
+    async fn register_new_id(&mut self) -> (i64, oneshot::Receiver<ClientRpcResult>) {
+        let mut id_and_oneshots = self.id_and_oneshots.lock().await;
+        let id_and_oneshots = &mut *id_and_oneshots;
+        let (tx, rx) = oneshot::channel();
+        let fresh_id = id_and_oneshots.0;
+        id_and_oneshots.1.insert(fresh_id, tx);
+        id_and_oneshots.0 += 1;
+        (fresh_id, rx)
     }
 
-    pub async fn dispatch<Q, R>(&mut self, rpc_tag: String, version: i64, q: Q) -> Result<Q, Error>
+    pub async fn dispatch<Q, R>(&mut self, rpc_tag: String, version: i64, q: Q) -> Result<R, Error>
     where
         Q: BinProtWrite + Send + Sync,
         R: BinProtRead + Send + Sync,
     {
-        let id = self.get_id();
+        let (id, rx) = self.register_new_id().await;
         let message = ClientMessage::Query(Query::<Q> {
             rpc_tag,
             version,
@@ -408,6 +470,14 @@ impl RpcClient {
             data: binprot::WithLen(q),
         });
         write_bin_prot(&self.w, &message, &mut self.buf).await?;
-        unimplemented!()
+        let rpc_result = rx.await?;
+        match rpc_result {
+            ClientRpcResult::Ok(buffer_with_len) => {
+                let mut slice = buffer_with_len.0.as_slice();
+                let result = R::binprot_read(&mut slice)?;
+                Ok(result)
+            }
+            ClientRpcResult::Error(_) => unimplemented!(),
+        }
     }
 }

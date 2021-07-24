@@ -5,6 +5,7 @@ pub enum Error {
     IncorrectPayloadLength(i64),
     NoMagicNumberInHandshake,
     UnexpectedMagicNumber(i64),
+    OneshotError(tokio::sync::oneshot::error::RecvError),
 }
 
 impl std::fmt::Display for Error {
@@ -24,5 +25,11 @@ impl From<std::io::Error> for Error {
 impl From<binprot::Error> for Error {
     fn from(e: binprot::Error) -> Self {
         Error::BinProtError(e)
+    }
+}
+
+impl From<tokio::sync::oneshot::error::RecvError> for Error {
+    fn from(e: tokio::sync::oneshot::error::RecvError) -> Self {
+        Error::OneshotError(e)
     }
 }
