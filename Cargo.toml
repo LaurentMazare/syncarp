@@ -12,6 +12,7 @@ license = "MIT/Apache-2.0"
 readme = "README.md"
 
 [dependencies]
+async-trait = "0.1.50"
 byteorder = "1.4.3"
 binprot_derive = "0.1"
 binprot = "0.1"

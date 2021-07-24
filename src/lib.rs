@@ -5,6 +5,7 @@ mod error;
 mod protocol;
 mod sexp;
 
+use async_trait::async_trait;
 use binprot::{BinProtRead, BinProtWrite};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -267,7 +268,7 @@ impl RpcClient {
                     break;
                 }
                 let mut slice = buf.as_slice();
-                let msg = match ClientMessage::<()>::binprot_read(&mut slice) {
+                let msg = match ClientMessage::<String, ()>::binprot_read(&mut slice) {
                     Err(err) => {
                         tracing::error!("unexpected message format: {:?}", err);
                         break;
@@ -277,7 +278,9 @@ impl RpcClient {
                 tracing::debug!("Client received: {:?}", msg);
                 match msg {
                     ClientMessage::Heartbeat => {}
-                    ClientMessage::Query(_) => {}
+                    ClientMessage::Query(_) => {
+                        tracing::error!("client received an unexpected query");
+                    }
                     ClientMessage::ClientResponse(response) => {
                         let mut id_and_oneshots = id_and_os.lock().await;
                         let (_id, oneshots) = &mut *id_and_oneshots;
@@ -322,13 +325,13 @@ impl RpcClient {
         (fresh_id, rx)
     }
 
-    pub async fn dispatch<Q, R>(&mut self, rpc_tag: String, version: i64, q: Q) -> Result<R, Error>
+    pub async fn dispatch<Q, R>(&mut self, rpc_tag: &str, version: i64, q: Q) -> Result<R, Error>
     where
-        Q: BinProtWrite + Send + Sync,
+        Q: BinProtWrite,
         R: BinProtRead + Send + Sync,
     {
         let (id, rx) = self.register_new_id().await;
-        let message = ClientMessage::Query(Query::<Q> {
+        let message = ClientMessage::Query(Query::<&str, Q> {
             rpc_tag,
             version,
             id,
@@ -344,5 +347,24 @@ impl RpcClient {
             }
             ClientRpcResult::Error(err) => Err(err.into()),
         }
+    }
+}
+
+#[async_trait]
+pub trait Rpc {
+    type Q; // Query
+    type R; // Response
+
+    const RPC_NAME: String;
+    const RPC_VERSION: i64;
+
+    async fn dispatch(rpc_client: &mut RpcClient, q: Self::Q) -> Result<Self::R, Error>
+    where
+        Self::Q: BinProtWrite + Send + Sync,
+        Self::R: BinProtRead + Send + Sync,
+    {
+        rpc_client
+            .dispatch(&Self::RPC_NAME, Self::RPC_VERSION, q)
+            .await
     }
 }

@@ -47,8 +47,8 @@ pub enum RpcError {
 pub struct Handshake(pub Vec<i64>);
 
 #[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
-pub struct Query<T> {
-    pub rpc_tag: String,
+pub struct Query<RpcTag, T> {
+    pub rpc_tag: RpcTag,
     pub version: i64,
     pub id: i64,
     pub data: binprot::WithLen<T>,
@@ -94,8 +94,8 @@ pub struct ClientResponse {
 }
 
 #[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
-pub enum ClientMessage<Q> {
+pub enum ClientMessage<RpcTag, Q> {
     Heartbeat,
-    Query(Query<Q>),
+    Query(Query<RpcTag, Q>),
     ClientResponse(ClientResponse),
 }
