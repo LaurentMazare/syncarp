@@ -2,7 +2,6 @@
 pub enum Error {
     IoError(std::io::Error),
     BinProtError(binprot::Error),
-    IncorrectPayloadLength(i64),
     NoMagicNumberInHandshake,
     UnexpectedMagicNumber(i64),
     OneshotError(tokio::sync::oneshot::error::RecvError),

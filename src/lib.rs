@@ -191,14 +191,8 @@ impl RpcServer {
                             write_bin_prot(&write, &message, &mut buf).await?
                         }
                         Some(r) => {
-                            let payload_len = q.data.0 as i64;
-                            if payload_len < 0 {
-                                return Err(Error::IncorrectPayloadLength(payload_len));
-                            }
-                            let payload_offset = recv_len - payload_len;
-                            let payload = &mut buf.as_mut_slice()[payload_offset as usize..];
                             buf2.clear();
-                            r.erased_rpc_impl(q.id, payload, &mut buf2)?;
+                            r.erased_rpc_impl(q.id, &q.data.0, &mut buf2)?;
                             write_with_size(&write, &buf2).await?;
                         }
                     }
