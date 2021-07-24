@@ -2,9 +2,10 @@
 
 // TODO: Pre-allocate buffers or switch to BufReader/BufWriter + handling async in binprot
 mod error;
+mod protocol;
+mod sexp;
 
 use binprot::{BinProtRead, BinProtWrite};
-use binprot_derive::{BinProtRead, BinProtWrite};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -12,99 +13,10 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{oneshot, Mutex};
 
 pub use crate::error::Error;
+use crate::protocol::*;
+pub use crate::sexp::Sexp;
 
 const RPC_MAGIC_NUMBER: i64 = 4_411_474;
-
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
-struct Handshake(Vec<i64>);
-
-#[derive(BinProtRead, BinProtWrite, Clone, PartialEq)]
-enum Sexp {
-    Atom(String),
-    List(Vec<Sexp>),
-}
-
-// Dummy formatter, escaping is not handled properly.
-impl std::fmt::Debug for Sexp {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Sexp::Atom(atom) => {
-                if atom.contains(|c: char| !c.is_alphanumeric()) {
-                    fmt.write_str("\"")?;
-                    for c in atom.escape_default() {
-                        std::fmt::Write::write_char(fmt, c)?;
-                    }
-                    fmt.write_str("\"")?;
-                } else {
-                    fmt.write_str(&atom)?;
-                }
-                Ok(())
-            }
-            Sexp::List(list) => {
-                fmt.write_str("(")?;
-                for (index, sexp) in list.iter().enumerate() {
-                    if index > 0 {
-                        fmt.write_str(" ")?;
-                    }
-                    sexp.fmt(fmt)?;
-                }
-                fmt.write_str(")")?;
-                Ok(())
-            }
-        }
-    }
-}
-
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
-struct Query<T> {
-    rpc_tag: String,
-    version: i64,
-    id: i64,
-    data: binprot::WithLen<T>,
-}
-
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
-#[polymorphic_variant]
-enum Version {
-    Version(i64),
-}
-
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
-enum RpcError {
-    BinIoExn(Sexp),
-    ConnectionClosed,
-    WriteError(Sexp),
-    UncaughtExn(Sexp),
-    UnimplementedRpc((String, Version)),
-    UnknownQueryId(String),
-}
-
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
-enum RpcResult<T> {
-    Ok(binprot::WithLen<T>),
-    Error(RpcError),
-}
-
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
-struct Response<T> {
-    id: i64,
-    data: RpcResult<T>,
-}
-
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
-struct ServerQuery {
-    rpc_tag: String,
-    version: i64,
-    id: i64,
-    data: binprot::Nat0,
-}
-
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
-enum ServerMessage<R> {
-    Heartbeat,
-    Query(ServerQuery),
-    Response(R),
-}
 
 async fn read_bin_prot<T: BinProtRead, R: AsyncReadExt + Unpin>(
     r: &mut R,
@@ -291,7 +203,9 @@ impl RpcServer {
                         }
                     }
                 }
-                ServerMessage::Response(()) => unimplemented!(),
+                ServerMessage::Response(()) => {
+                    tracing::error!("server received a response message")
+                }
             };
         }
     }
@@ -316,49 +230,6 @@ impl Default for RpcServer {
     fn default() -> Self {
         Self::new()
     }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct BufferWithLen(Vec<u8>);
-
-impl BinProtRead for BufferWithLen {
-    fn binprot_read<R: std::io::Read + ?Sized>(r: &mut R) -> Result<Self, binprot::Error>
-    where
-        Self: Sized,
-    {
-        let len = binprot::Nat0::binprot_read(r)?;
-        let mut buf: Vec<u8> = vec![0u8; len.0 as usize];
-        r.read_exact(&mut buf)?;
-        Ok(BufferWithLen(buf))
-    }
-}
-
-impl BinProtWrite for BufferWithLen {
-    fn binprot_write<W: std::io::Write>(&self, w: &mut W) -> Result<(), std::io::Error> {
-        let nat0 = binprot::Nat0(self.0.len() as u64);
-        nat0.binprot_write(w)?;
-        w.write_all(&self.0)?;
-        Ok(())
-    }
-}
-
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
-enum ClientRpcResult {
-    Ok(BufferWithLen),
-    Error(RpcError),
-}
-
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
-struct ClientResponse {
-    id: i64,
-    data: ClientRpcResult,
-}
-
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
-enum ClientMessage<Q> {
-    Heartbeat,
-    Query(Query<Q>),
-    ClientResponse(ClientResponse),
 }
 
 type OneShots = BTreeMap<i64, oneshot::Sender<ClientRpcResult>>;
@@ -477,7 +348,7 @@ impl RpcClient {
                 let result = R::binprot_read(&mut slice)?;
                 Ok(result)
             }
-            ClientRpcResult::Error(_) => unimplemented!(),
+            ClientRpcResult::Error(err) => Err(err.into()),
         }
     }
 }

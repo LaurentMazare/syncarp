@@ -6,6 +6,8 @@ pub enum Error {
     NoMagicNumberInHandshake,
     UnexpectedMagicNumber(i64),
     OneshotError(tokio::sync::oneshot::error::RecvError),
+    ServerReceivedResponse,
+    RpcError(crate::protocol::RpcError),
 }
 
 impl std::fmt::Display for Error {
@@ -25,6 +27,12 @@ impl From<std::io::Error> for Error {
 impl From<binprot::Error> for Error {
     fn from(e: binprot::Error) -> Self {
         Error::BinProtError(e)
+    }
+}
+
+impl From<crate::protocol::RpcError> for Error {
+    fn from(e: crate::protocol::RpcError) -> Self {
+        Error::RpcError(e)
     }
 }
 
