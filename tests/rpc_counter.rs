@@ -52,11 +52,12 @@ impl syncarp::Rpc for SetIdCounter {
     const RPC_VERSION: i64 = 1i64;
 }
 
-async fn run_rpc_server() -> Result<(), syncarp::Error> {
+async fn rpc_server() -> Result<syncarp::RpcServer, syncarp::Error> {
     let counter = Arc::new(Mutex::new(0));
     let get_unique_id_impl = GetUniqueIdImpl(counter.clone());
     let set_id_counter_impl = SetIdCounterImpl(counter.clone());
-    syncarp::RpcServer::new()
+    let rpc_server = syncarp::RpcServer::new("127.0.0.1:8080")
+        .await?
         .add_rpc(
             GetUniqueId::RPC_NAME,
             GetUniqueId::RPC_VERSION,
@@ -66,10 +67,8 @@ async fn run_rpc_server() -> Result<(), syncarp::Error> {
             SetIdCounter::RPC_NAME,
             SetIdCounter::RPC_VERSION,
             set_id_counter_impl,
-        )
-        .start("127.0.0.1:8080")
-        .await?;
-    Ok(())
+        );
+    Ok(rpc_server)
 }
 
 #[tokio::test]
@@ -82,11 +81,8 @@ async fn server_test() -> Result<(), syncarp::Error> {
         tracing::subscriber::set_global_default(subscriber)
             .expect("setting default subscriber failed");
     }
-    tokio::spawn(async move { run_rpc_server().await });
-
-    // TODO: Rather than waiting for the server to start, tweak the
-    // api to split the [bind] from the [accept] loop.
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let rpc_server = rpc_server().await?;
+    tokio::spawn(async move { rpc_server.run().await });
 
     let mut rpc_client = syncarp::RpcClient::new("127.0.0.1:8080").await?;
     for i in 0..5i64 {

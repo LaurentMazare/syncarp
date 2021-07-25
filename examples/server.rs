@@ -40,10 +40,11 @@ async fn main() -> Result<(), syncarp::Error> {
     let counter = Arc::new(Mutex::new(0));
     let get_unique_id_impl = GetUniqueIdImpl(counter.clone());
     let set_id_counter_impl = SetIdCounterImpl(counter.clone());
-    syncarp::RpcServer::new()
+    syncarp::RpcServer::new("127.0.0.1:8080")
+        .await?
         .add_rpc("get-unique-id", 0, get_unique_id_impl)
         .add_rpc("set-id-counter", 1, set_id_counter_impl)
-        .start("127.0.0.1:8080")
+        .run()
         .await?;
     Ok(())
 }

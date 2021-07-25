@@ -93,6 +93,7 @@ where
 
 pub struct RpcServer {
     rpc_impls: BTreeMap<(String, i64), Box<dyn ErasedJRpcImpl + Send + Sync>>,
+    listener: TcpListener,
 }
 
 fn spawn_heartbeat_thread(s: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>) {
@@ -116,12 +117,6 @@ fn spawn_heartbeat_thread(s: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>) {
 }
 
 impl RpcServer {
-    pub fn new() -> Self {
-        RpcServer {
-            rpc_impls: BTreeMap::new(),
-        }
-    }
-
     pub fn add_rpc<T: 'static>(mut self, rpc_name: &str, rpc_version: i64, impl_: T) -> Self
     where
         T: JRpcImpl + Send + Sync,
@@ -136,7 +131,7 @@ impl RpcServer {
     }
 
     async fn handle_connection(
-        &self,
+        rpc_impls: &BTreeMap<(String, i64), Box<dyn ErasedJRpcImpl + Send + Sync>>,
         stream: TcpStream,
         addr: std::net::SocketAddr,
     ) -> Result<(), Error> {
@@ -175,7 +170,7 @@ impl RpcServer {
                 ServerMessage::Heartbeat => {}
                 ServerMessage::Query(q) => {
                     let rpc_key = (q.rpc_tag, q.version);
-                    match self.rpc_impls.get(&rpc_key) {
+                    match rpc_impls.get(&rpc_key) {
                         None => {
                             let err = RpcError::UnimplementedRpc((
                                 rpc_key.0,
@@ -201,25 +196,27 @@ impl RpcServer {
         }
     }
 
-    pub async fn start<A: tokio::net::ToSocketAddrs>(self, addr: A) -> Result<(), Error> {
-        let rc = Arc::new(self);
+    pub async fn new<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<Self, Error> {
         let listener = TcpListener::bind(addr).await?;
         tracing::debug!("listening");
+        let rpc_server = RpcServer {
+            rpc_impls: BTreeMap::new(),
+            listener,
+        };
+        Ok(rpc_server)
+    }
+
+    pub async fn run(self) -> Result<(), Error> {
+        let rc = Arc::new(self.rpc_impls);
         loop {
             let rc = rc.clone();
-            let (stream, addr) = listener.accept().await?;
+            let (stream, addr) = self.listener.accept().await?;
             tokio::spawn(async move {
-                if let Err(e) = (*rc).handle_connection(stream, addr).await {
+                if let Err(e) = RpcServer::handle_connection(&*rc, stream, addr).await {
                     tracing::info!("error handling connection {:?} {:?}", addr, e);
                 }
             });
         }
-    }
-}
-
-impl Default for RpcServer {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
