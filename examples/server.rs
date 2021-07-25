@@ -1,13 +1,21 @@
 use std::sync::{Arc, Mutex};
+use syncarp::JRpc;
 
+struct GetUniqueId;
 struct GetUniqueIdImpl(Arc<Mutex<i64>>);
 
-impl syncarp::JRpcImpl for GetUniqueIdImpl {
+impl JRpc for GetUniqueId {
     type Q = ();
     type R = i64;
-    type E = std::convert::Infallible;
+    const RPC_NAME: &'static str = "get-unique-id";
+    const RPC_VERSION: i64 = 0i64;
+}
 
-    fn rpc_impl(&self, _q: Self::Q) -> Result<Self::R, Self::E> {
+impl syncarp::JRpcImpl for GetUniqueIdImpl {
+    type E = std::convert::Infallible;
+    type JRpc = GetUniqueId;
+
+    fn rpc_impl(&self, _q: <Self::JRpc as JRpc>::Q) -> Result<<Self::JRpc as JRpc>::R, Self::E> {
         let mut b = self.0.lock().unwrap();
         let result = *b;
         *b += 1;
@@ -15,14 +23,21 @@ impl syncarp::JRpcImpl for GetUniqueIdImpl {
     }
 }
 
+struct SetIdCounter;
 struct SetIdCounterImpl(Arc<Mutex<i64>>);
 
-impl syncarp::JRpcImpl for SetIdCounterImpl {
+impl JRpc for SetIdCounter {
     type Q = i64;
     type R = ();
-    type E = std::convert::Infallible;
+    const RPC_NAME: &'static str = "set-id-counter";
+    const RPC_VERSION: i64 = 1i64;
+}
 
-    fn rpc_impl(&self, q: Self::Q) -> Result<Self::R, Self::E> {
+impl syncarp::JRpcImpl for SetIdCounterImpl {
+    type E = std::convert::Infallible;
+    type JRpc = SetIdCounter;
+
+    fn rpc_impl(&self, q: <Self::JRpc as JRpc>::Q) -> Result<<Self::JRpc as JRpc>::R, Self::E> {
         let mut b = self.0.lock().unwrap();
         *b = q;
         Ok(())
@@ -42,8 +57,8 @@ async fn main() -> Result<(), syncarp::Error> {
     let set_id_counter_impl = SetIdCounterImpl(counter.clone());
     syncarp::RpcServer::new("127.0.0.1:8080")
         .await?
-        .add_rpc("get-unique-id", 0, get_unique_id_impl)
-        .add_rpc("set-id-counter", 1, set_id_counter_impl)
+        .add_rpc(get_unique_id_impl)
+        .add_rpc(set_id_counter_impl)
         .run()
         .await?;
     Ok(())

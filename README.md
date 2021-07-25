@@ -11,14 +11,21 @@ example](https://github.com/janestreet/async/tree/master/async_rpc/example) can
 be implemented as follows: 
 
 ```rust
-struct GetUniqueIdImpl(Mutex<i64>);
+struct GetUniqueId;
+struct GetUniqueIdImpl(Arc<Mutex<i64>>);
 
-impl syncarp::JRpcImpl for GetUniqueIdImpl {
+impl JRpc for GetUniqueId {
     type Q = ();
     type R = i64;
-    type E = std::convert::Infallible;
+    const RPC_NAME: &'static str = "get-unique-id";
+    const RPC_VERSION: i64 = 0i64;
+}
 
-    fn rpc_impl(&self, _q: Self::Q) -> Result<Self::R, Self::E> {
+impl syncarp::JRpcImpl for GetUniqueIdImpl {
+    type E = std::convert::Infallible;
+    type JRpc = GetUniqueId;
+
+    fn rpc_impl(&self, _q: <Self::JRpc as JRpc>::Q) -> Result<<Self::JRpc as JRpc>::R, Self::E> {
         let mut b = self.0.lock().unwrap();
         let result = *b;
         *b += 1;
@@ -29,9 +36,10 @@ impl syncarp::JRpcImpl for GetUniqueIdImpl {
 #[tokio::main]
 async fn main() -> Result<(), syncarp::Error> {
     let get_unique_id_impl = GetUniqueIdImpl(Mutex::new(0));
-    syncarp::RpcServer::new()
-        .add_rpc("get-unique-id", /*version=*/0, get_unique_id_impl)
-        .start("127.0.0.1:8080")
+    syncarp::RpcServer::new("127.0.0.1")
+        .await?
+        .add_rpc(get_unique_id_impl)
+        .run()
         .await?;
     Ok(())
 }

@@ -1,9 +1,9 @@
-use syncarp::Rpc;
+use syncarp::JRpc;
 
 struct GetUniqueId;
 struct SetIdCounter;
 
-impl syncarp::Rpc for GetUniqueId {
+impl syncarp::JRpc for GetUniqueId {
     type Q = ();
     type R = i64;
 
@@ -11,7 +11,7 @@ impl syncarp::Rpc for GetUniqueId {
     const RPC_VERSION: i64 = 0i64;
 }
 
-impl syncarp::Rpc for SetIdCounter {
+impl syncarp::JRpc for SetIdCounter {
     type Q = i64;
     type R = ();
 

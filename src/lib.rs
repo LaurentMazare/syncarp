@@ -55,11 +55,13 @@ async fn write_bin_prot<T: BinProtWrite>(
 }
 
 pub trait JRpcImpl {
-    type Q; // Query
-    type R; // Response
     type E; // Error
+    type JRpc: JRpc;
 
-    fn rpc_impl(&self, q: Self::Q) -> std::result::Result<Self::R, Self::E>;
+    fn rpc_impl(
+        &self,
+        q: <Self::JRpc as JRpc>::Q,
+    ) -> std::result::Result<<Self::JRpc as JRpc>::R, Self::E>;
 }
 
 trait ErasedJRpcImpl {
@@ -69,12 +71,12 @@ trait ErasedJRpcImpl {
 impl<T> ErasedJRpcImpl for T
 where
     T: JRpcImpl + Send + Sync,
-    T::Q: BinProtRead + Send + Sync,
-    T::R: BinProtWrite + Send + Sync,
+    <T::JRpc as JRpc>::Q: BinProtRead + Send + Sync,
+    <T::JRpc as JRpc>::R: BinProtWrite + Send + Sync,
     T::E: std::error::Error + Send,
 {
     fn erased_rpc_impl(&self, id: i64, mut payload: &[u8], buf: &mut Vec<u8>) -> Result<(), Error> {
-        let query = T::Q::binprot_read(&mut payload)?;
+        let query = <T::JRpc as JRpc>::Q::binprot_read(&mut payload)?;
         let rpc_result = match self.rpc_impl(query) {
             Ok(response) => RpcResult::Ok(binprot::WithLen(response)),
             Err(error) => {
@@ -117,16 +119,16 @@ fn spawn_heartbeat_thread(s: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>) {
 }
 
 impl RpcServer {
-    pub fn add_rpc<T: 'static>(mut self, rpc_name: &str, rpc_version: i64, impl_: T) -> Self
+    pub fn add_rpc<T: 'static>(mut self, impl_: T) -> Self
     where
         T: JRpcImpl + Send + Sync,
-        T::Q: BinProtRead + Send + Sync,
-        T::R: BinProtWrite + Send + Sync,
+        <T::JRpc as JRpc>::Q: BinProtRead + Send + Sync,
+        <T::JRpc as JRpc>::R: BinProtWrite + Send + Sync,
         T::E: std::error::Error + Send,
     {
         let impl_: Box<dyn ErasedJRpcImpl + Send + Sync> = Box::new(impl_);
         self.rpc_impls
-            .insert((rpc_name.to_string(), rpc_version), impl_);
+            .insert((T::JRpc::RPC_NAME.to_string(), T::JRpc::RPC_VERSION), impl_);
         self
     }
 
@@ -331,7 +333,7 @@ impl RpcClient {
 }
 
 #[async_trait]
-pub trait Rpc {
+pub trait JRpc {
     type Q; // Query
     type R; // Response
 
