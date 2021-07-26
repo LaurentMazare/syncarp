@@ -13,6 +13,14 @@ impl JRpc for GetUniqueId {
     const RPC_VERSION: i64 = 0i64;
 }
 
+struct GetUniqueIdV2;
+impl JRpc for GetUniqueIdV2 {
+    type Q = ();
+    type R = i64;
+    const RPC_NAME: &'static str = "get-unique-id";
+    const RPC_VERSION: i64 = 2i64;
+}
+
 impl syncarp::JRpcImpl for GetUniqueIdImpl {
     type E = std::convert::Infallible;
     type JRpc = GetUniqueId;
@@ -26,7 +34,6 @@ impl syncarp::JRpcImpl for GetUniqueIdImpl {
 }
 
 struct SetIdCounter;
-struct SetIdCounterImpl(Arc<Mutex<i64>>);
 
 impl JRpc for SetIdCounter {
     type Q = i64;
@@ -35,25 +42,12 @@ impl JRpc for SetIdCounter {
     const RPC_VERSION: i64 = 1i64;
 }
 
-impl syncarp::JRpcImpl for SetIdCounterImpl {
-    type E = std::convert::Infallible;
-    type JRpc = SetIdCounter;
-
-    fn rpc_impl(&self, q: <Self::JRpc as JRpc>::Q) -> Result<<Self::JRpc as JRpc>::R, Self::E> {
-        let mut b = self.0.lock().unwrap();
-        *b = q;
-        Ok(())
-    }
-}
-
 async fn rpc_server() -> Result<syncarp::RpcServer, syncarp::Error> {
     let counter = Arc::new(Mutex::new(0));
-    let get_unique_id_impl = GetUniqueIdImpl(counter.clone());
-    let set_id_counter_impl = SetIdCounterImpl(counter.clone());
+    let get_unique_id_impl = GetUniqueIdImpl(counter);
     let rpc_server = syncarp::RpcServer::new("127.0.0.1:0")
         .await?
-        .add_rpc(get_unique_id_impl)
-        .add_rpc(set_id_counter_impl);
+        .add_rpc(get_unique_id_impl);
     Ok(rpc_server)
 }
 
@@ -72,14 +66,15 @@ async fn server_test() -> Result<(), syncarp::Error> {
     tokio::spawn(async move { rpc_server.run().await });
 
     let mut rpc_client = syncarp::RpcClient::new(local_addr).await?;
-    for i in 0..5i64 {
-        let result = GetUniqueId::dispatch(&mut rpc_client, ()).await?;
-        assert_eq!(result, i);
-    }
-    SetIdCounter::dispatch(&mut rpc_client, 42).await?;
-    for i in 0..5i64 {
-        let result = GetUniqueId::dispatch(&mut rpc_client, ()).await?;
-        assert_eq!(result, 42 + i);
-    }
+    let result = GetUniqueId::dispatch(&mut rpc_client, ()).await?;
+    assert_eq!(result, 0);
+    let result = SetIdCounter::dispatch(&mut rpc_client, 42).await;
+    assert!(result.is_err());
+    let result = GetUniqueId::dispatch(&mut rpc_client, ()).await?;
+    assert_eq!(result, 1);
+    let result = GetUniqueIdV2::dispatch(&mut rpc_client, ()).await;
+    assert!(result.is_err());
+    let result = GetUniqueId::dispatch(&mut rpc_client, ()).await?;
+    assert_eq!(result, 2);
     Ok(())
 }

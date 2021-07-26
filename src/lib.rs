@@ -119,6 +119,10 @@ fn spawn_heartbeat_thread(s: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>) {
 }
 
 impl RpcServer {
+    pub fn local_addr(&self) -> Result<std::net::SocketAddr, std::io::Error> {
+        self.listener.local_addr()
+    }
+
     pub fn add_rpc<T: 'static>(mut self, impl_: T) -> Self
     where
         T: JRpcImpl + Send + Sync,
