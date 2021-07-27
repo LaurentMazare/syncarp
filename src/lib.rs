@@ -1,6 +1,6 @@
 // RPC Client and cerver compatible with https://github.com/janestreet/async_rpc_kernel
 
-// TODO: Pre-allocate buffers or switch to BufReader/BufWriter + handling async in binprot
+// TODO: Maybe switch to BufReader/BufWriter + handling async in binprot
 mod error;
 mod protocol;
 mod sexp;
@@ -144,7 +144,6 @@ impl RpcServer {
         tracing::debug!("accepted connection {:?}", addr);
         let (mut read, write) = stream.into_split();
         let write = Arc::new(Mutex::new(write));
-        // TODO: use a BufReader
         let mut buf = vec![0u8; 128];
         let mut buf2 = vec![0u8; 128];
         write_bin_prot(&write, &Handshake(vec![RPC_MAGIC_NUMBER, 1]), &mut buf).await?;
