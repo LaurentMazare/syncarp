@@ -1,6 +1,7 @@
 // RPC Client and cerver compatible with https://github.com/janestreet/async_rpc_kernel
 
 // TODO: Maybe switch to BufReader/BufWriter + handling async in binprot
+// TODO: Add some failure when reading more or less data than expected.
 mod error;
 mod protocol;
 mod sexp;
@@ -225,7 +226,7 @@ impl RpcServer {
     }
 }
 
-type OneShots = BTreeMap<i64, oneshot::Sender<ClientRpcResult>>;
+type OneShots = BTreeMap<i64, oneshot::Sender<Result<ClientRpcResult, Error>>>;
 
 pub struct RpcClient {
     w: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
@@ -283,12 +284,24 @@ impl RpcClient {
                                 tracing::error!("client received an unexpected id: {}", resp.id);
                             }
                             Some(tx) => {
-                                if let Err(err) = tx.send(resp.data) {
+                                if let Err(err) = tx.send(Ok(resp.data)) {
                                     tracing::error!("client tx error: {:?}", err)
                                 }
                             }
                         }
                     }
+                }
+            }
+            let mut id_and_oneshots = id_and_os.lock().await;
+            let id = id_and_oneshots.0;
+            let (_id, oneshots) = std::mem::replace(&mut *id_and_oneshots, (id, BTreeMap::new()));
+            for (_key, tx) in oneshots.into_iter() {
+                let error = std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    "connection closed by server",
+                );
+                if let Err(err) = tx.send(Err(error.into())) {
+                    tracing::error!("client tx error: {:?}", err)
                 }
             }
         });
@@ -301,7 +314,9 @@ impl RpcClient {
 
     // Registers a fresh id and get back both the id and the
     // reader.
-    async fn register_new_id(&mut self) -> (i64, oneshot::Receiver<ClientRpcResult>) {
+    async fn register_new_id(
+        &mut self,
+    ) -> (i64, oneshot::Receiver<Result<ClientRpcResult, Error>>) {
         let mut id_and_oneshots = self.id_and_oneshots.lock().await;
         let id_and_oneshots = &mut *id_and_oneshots;
         let (tx, rx) = oneshot::channel();
@@ -324,7 +339,7 @@ impl RpcClient {
             data: binprot::WithLen(q),
         });
         write_bin_prot(&self.w, &message, &mut self.buf).await?;
-        let rpc_result = rx.await?;
+        let rpc_result = rx.await??;
         match rpc_result {
             ClientRpcResult::Ok(buffer_with_len) => {
                 let result = R::binprot_read(&mut buffer_with_len.0.as_slice())?;

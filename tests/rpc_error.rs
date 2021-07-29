@@ -33,6 +33,17 @@ impl syncarp::JRpcImpl for GetUniqueIdImpl {
     }
 }
 
+struct GetUniqueIdBroken;
+
+// This uses the same rpc name and version than GetUniqueId but
+// with a different type.
+impl JRpc for GetUniqueIdBroken {
+    type Q = i64;
+    type R = i64;
+    const RPC_NAME: &'static str = "get-unique-id";
+    const RPC_VERSION: i64 = 0i64;
+}
+
 struct SetIdCounter;
 
 impl JRpc for SetIdCounter {
@@ -52,7 +63,7 @@ async fn rpc_server() -> Result<syncarp::RpcServer, syncarp::Error> {
 }
 
 #[tokio::test]
-async fn server_test() -> Result<(), syncarp::Error> {
+async fn server_error_test() -> Result<(), syncarp::Error> {
     if DEBUG {
         let subscriber = tracing_subscriber::FmtSubscriber::builder()
             .with_max_level(tracing::Level::TRACE)
@@ -76,5 +87,32 @@ async fn server_test() -> Result<(), syncarp::Error> {
     assert!(result.is_err());
     let result = GetUniqueId::dispatch(&mut rpc_client, ()).await?;
     assert_eq!(result, 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn type_error_test() -> Result<(), syncarp::Error> {
+    if DEBUG {
+        let subscriber = tracing_subscriber::FmtSubscriber::builder()
+            .with_max_level(tracing::Level::TRACE)
+            .finish();
+
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("setting default subscriber failed");
+    }
+    let rpc_server = rpc_server().await?;
+    let local_addr = rpc_server.local_addr()?;
+    tokio::spawn(async move { rpc_server.run().await });
+
+    let mut rpc_client = syncarp::RpcClient::new(local_addr).await?;
+    let result = GetUniqueId::dispatch(&mut rpc_client, ()).await?;
+    assert_eq!(result, 0);
+    // This works because the binprot representation of unit is 0.
+    let result = GetUniqueIdBroken::dispatch(&mut rpc_client, 0).await?;
+    assert_eq!(result, 1);
+    // This fail as an unexpected value is received.
+    // Currently this gets stuck though.
+    // let result = GetUniqueIdBroken::dispatch(&mut rpc_client, 1).await?;
+    // assert_eq!(result, 0);
     Ok(())
 }
