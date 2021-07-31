@@ -9,6 +9,7 @@ mod sexp;
 use async_trait::async_trait;
 use binprot::{BinProtRead, BinProtWrite};
 use std::collections::BTreeMap;
+use std::ops::DerefMut;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -33,19 +34,37 @@ async fn read_bin_prot<T: BinProtRead, R: AsyncReadExt + Unpin>(
     Ok(data)
 }
 
-async fn write_with_size(
-    w: &Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
-    buf: &[u8],
-) -> std::io::Result<()> {
+// WriteOrClosed is a wrapper around the writer so that it is possible
+// to close an Arc<Mutex<WriteOrClosed>> that is shared between multiple
+// threads.
+// This is useful as the writer is passed to the thread handling the
+// heartbeating.
+enum WriteOrClosed {
+    Write(tokio::net::tcp::OwnedWriteHalf),
+    Closed,
+}
+
+async fn write_with_size(w: &Arc<Mutex<WriteOrClosed>>, buf: &[u8]) -> std::io::Result<()> {
     let mut w = w.lock().await;
-    let len = buf.len() as i64;
-    w.write_all(&len.to_le_bytes()).await?;
-    w.write_all(&buf).await?;
-    Ok(())
+    match &mut *w {
+        WriteOrClosed::Write(w) => {
+            let len = buf.len() as i64;
+            w.write_all(&len.to_le_bytes()).await?;
+            w.write_all(buf).await?;
+            Ok(())
+        }
+        WriteOrClosed::Closed => {
+            let error = std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "connection closed by server",
+            );
+            Err(error)
+        }
+    }
 }
 
 async fn write_bin_prot<T: BinProtWrite>(
-    w: &Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+    w: &Arc<Mutex<WriteOrClosed>>,
     v: &T,
     buf: &mut Vec<u8>,
 ) -> std::io::Result<()> {
@@ -99,7 +118,7 @@ pub struct RpcServer {
     listener: TcpListener,
 }
 
-fn spawn_heartbeat_thread(s: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>) {
+fn spawn_heartbeat_thread(s: Arc<Mutex<WriteOrClosed>>) {
     tokio::spawn(async move {
         let mut buf = vec![0u8; 64];
         loop {
@@ -137,14 +156,13 @@ impl RpcServer {
         self
     }
 
-    async fn handle_connection(
+    async fn handle_connection_(
         rpc_impls: &BTreeMap<(String, i64), Box<dyn ErasedJRpcImpl + Send + Sync>>,
-        stream: TcpStream,
+        mut read: tokio::net::tcp::OwnedReadHalf,
+        write: Arc<Mutex<WriteOrClosed>>,
         addr: std::net::SocketAddr,
     ) -> Result<(), Error> {
         tracing::debug!("accepted connection {:?}", addr);
-        let (mut read, write) = stream.into_split();
-        let write = Arc::new(Mutex::new(write));
         let mut buf = vec![0u8; 128];
         let mut buf2 = vec![0u8; 128];
         write_bin_prot(&write, &Handshake(vec![RPC_MAGIC_NUMBER, 1]), &mut buf).await?;
@@ -202,6 +220,23 @@ impl RpcServer {
         }
     }
 
+    async fn handle_connection(
+        rpc_impls: &BTreeMap<(String, i64), Box<dyn ErasedJRpcImpl + Send + Sync>>,
+        stream: TcpStream,
+        addr: std::net::SocketAddr,
+    ) -> Result<(), Error> {
+        tracing::debug!("accepted connection {:?}", addr);
+        let (read, write) = stream.into_split();
+        let write = Arc::new(Mutex::new(WriteOrClosed::Write(write)));
+        let res = RpcServer::handle_connection_(rpc_impls, read, write.clone(), addr).await;
+        let mut write_or_closed = write.lock().await;
+        let write_or_closed = write_or_closed.deref_mut();
+        // Extracting the writer results in it being closed if this
+        // was not already the case.
+        let _writer = std::mem::replace(write_or_closed, WriteOrClosed::Closed);
+        res
+    }
+
     pub async fn new<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<Self, Error> {
         let listener = TcpListener::bind(addr).await?;
         tracing::debug!("listening");
@@ -229,7 +264,7 @@ impl RpcServer {
 type OneShots = BTreeMap<i64, oneshot::Sender<Result<ClientRpcResult, Error>>>;
 
 pub struct RpcClient {
-    w: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
+    w: Arc<Mutex<WriteOrClosed>>,
     buf: Vec<u8>,
     id_and_oneshots: Arc<Mutex<(i64, OneShots)>>,
 }
@@ -238,7 +273,7 @@ impl RpcClient {
     pub async fn new<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<Self, Error> {
         let stream = TcpStream::connect(addr).await?;
         let (mut r, w) = stream.into_split();
-        let w = Arc::new(Mutex::new(w));
+        let w = Arc::new(Mutex::new(WriteOrClosed::Write(w)));
         let mut buf = vec![0u8; 128];
         let handshake: Handshake = read_bin_prot(&mut r, &mut buf).await?;
         tracing::debug!("Handshake: {:?}", handshake);
@@ -364,7 +399,7 @@ pub trait JRpc {
         Self::R: BinProtRead + Send + Sync,
     {
         rpc_client
-            .dispatch(&Self::RPC_NAME, Self::RPC_VERSION, q)
+            .dispatch(Self::RPC_NAME, Self::RPC_VERSION, q)
             .await
     }
 }

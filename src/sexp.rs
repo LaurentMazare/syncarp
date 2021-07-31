@@ -19,7 +19,7 @@ impl std::fmt::Debug for Sexp {
                     }
                     fmt.write_str("\"")?;
                 } else {
-                    fmt.write_str(&atom)?;
+                    fmt.write_str(atom)?;
                 }
                 Ok(())
             }

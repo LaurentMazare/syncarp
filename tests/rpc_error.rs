@@ -69,8 +69,7 @@ async fn server_error_test() -> Result<(), syncarp::Error> {
             .with_max_level(tracing::Level::TRACE)
             .finish();
 
-        tracing::subscriber::set_global_default(subscriber)
-            .expect("setting default subscriber failed");
+        let _test = tracing::subscriber::set_global_default(subscriber);
     }
     let rpc_server = rpc_server().await?;
     let local_addr = rpc_server.local_addr()?;
@@ -97,8 +96,7 @@ async fn type_error_test() -> Result<(), syncarp::Error> {
             .with_max_level(tracing::Level::TRACE)
             .finish();
 
-        tracing::subscriber::set_global_default(subscriber)
-            .expect("setting default subscriber failed");
+        let _test = tracing::subscriber::set_global_default(subscriber);
     }
     let rpc_server = rpc_server().await?;
     let local_addr = rpc_server.local_addr()?;
@@ -112,7 +110,8 @@ async fn type_error_test() -> Result<(), syncarp::Error> {
     assert_eq!(result, 1);
     // This fail as an unexpected value is received.
     // Currently this gets stuck though.
-    // let result = GetUniqueIdBroken::dispatch(&mut rpc_client, 1).await?;
-    // assert_eq!(result, 0);
+    let result = GetUniqueIdBroken::dispatch(&mut rpc_client, 1).await;
+    assert!(result.is_err());
+
     Ok(())
 }
