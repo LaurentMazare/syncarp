@@ -99,3 +99,5 @@ pub enum ClientMessage<RpcTag, Q> {
     Query(Query<RpcTag, Q>),
     ClientResponse(ClientResponse),
 }
+
+pub const RPC_MAGIC_NUMBER: i64 = 4_411_474;
