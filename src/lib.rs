@@ -8,8 +8,10 @@ mod read_write;
 mod rpc_client;
 mod rpc_server;
 mod sexp;
+mod traits;
 
 pub use crate::error::Error;
-pub use crate::rpc_client::*;
-pub use crate::rpc_server::*;
+pub use crate::rpc_client::RpcClient;
+pub use crate::rpc_server::RpcServer;
 pub use crate::sexp::Sexp;
+pub use crate::traits::{JRpc, JRpcImpl};

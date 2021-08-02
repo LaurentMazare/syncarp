@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use binprot::{BinProtRead, BinProtWrite};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -131,24 +130,5 @@ impl RpcClient {
             }
             ClientRpcResult::Error(err) => Err(err.into()),
         }
-    }
-}
-
-#[async_trait]
-pub trait JRpc {
-    type Q; // Query
-    type R; // Response
-
-    const RPC_NAME: &'static str;
-    const RPC_VERSION: i64;
-
-    async fn dispatch(rpc_client: &mut RpcClient, q: Self::Q) -> Result<Self::R, Error>
-    where
-        Self::Q: BinProtWrite + Send + Sync,
-        Self::R: BinProtRead + Send + Sync,
-    {
-        rpc_client
-            .dispatch(Self::RPC_NAME, Self::RPC_VERSION, q)
-            .await
     }
 }

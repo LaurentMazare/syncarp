@@ -9,18 +9,8 @@ use tokio::sync::Mutex;
 use crate::error::Error;
 use crate::protocol::*;
 use crate::read_write::*;
-use crate::rpc_client::JRpc;
 use crate::sexp::Sexp;
-
-pub trait JRpcImpl {
-    type E; // Error
-    type JRpc: JRpc;
-
-    fn rpc_impl(
-        &self,
-        q: <Self::JRpc as JRpc>::Q,
-    ) -> std::result::Result<<Self::JRpc as JRpc>::R, Self::E>;
-}
+use crate::traits::{JRpc, JRpcImpl};
 
 trait ErasedJRpcImpl {
     fn erased_rpc_impl(&self, id: i64, payload: &[u8], buf: &mut Vec<u8>) -> Result<(), Error>;
