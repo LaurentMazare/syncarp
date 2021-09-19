@@ -89,7 +89,10 @@ impl RpcServer {
         loop {
             if let Err(err) = read.read_exact(&mut recv_bytes).await {
                 match err.kind() {
-                    std::io::ErrorKind::UnexpectedEof => return Ok(()),
+                    std::io::ErrorKind::UnexpectedEof => {
+                        tracing::debug!("connection closed {:?}", addr);
+                        return Ok(());
+                    }
                     _ => return Err(err.into()),
                 }
             };
