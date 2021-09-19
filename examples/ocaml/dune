@@ -1,0 +1,3 @@
+(executables (names rpc_client rpc_server)
+ (libraries async bin_prot core)
+ (preprocess (pps ppx_jane)))
