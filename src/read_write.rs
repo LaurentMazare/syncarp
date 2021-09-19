@@ -68,7 +68,9 @@ pub fn spawn_heartbeat_thread(s: Arc<Mutex<WriteOrClosed>>) {
             let res = write_bin_prot(&s, &ServerMessage::Heartbeat::<()>, &mut buf).await;
             if let Err(error) = res {
                 match error.kind() {
-                    std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::UnexpectedEof => break,
+                    std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::UnexpectedEof
+                    | std::io::ErrorKind::ConnectionAborted => break,
                     _ => {
                         tracing::error!("heartbeat failure {:?}", error);
                         break;
