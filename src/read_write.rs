@@ -1,5 +1,5 @@
 use binprot::{BinProtRead, BinProtWrite};
-use std::sync::Arc;
+use std::sync::{atomic::AtomicBool, Arc};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
@@ -59,11 +59,16 @@ pub async fn write_bin_prot<T: BinProtWrite>(
     Ok(())
 }
 
-pub fn spawn_heartbeat_thread(s: Arc<Mutex<WriteOrClosed>>) {
+pub fn spawn_heartbeat_thread(s: Arc<Mutex<WriteOrClosed>>) -> Arc<AtomicBool> {
+    let is_done = Arc::new(AtomicBool::new(false));
+    let is_done_ret = is_done.clone();
     tokio::spawn(async move {
         let mut buf = vec![0u8; 64];
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            if is_done.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
             tracing::debug!("heartbeating");
             let res = write_bin_prot(&s, &ServerMessage::Heartbeat::<()>, &mut buf).await;
             if let Err(error) = res {
@@ -79,4 +84,5 @@ pub fn spawn_heartbeat_thread(s: Arc<Mutex<WriteOrClosed>>) {
             }
         }
     });
+    is_done_ret
 }

@@ -29,7 +29,7 @@ impl RpcClient {
 
         let oneshots: OneShots = BTreeMap::new();
         let id_and_oneshots = Arc::new(Mutex::new((0i64, oneshots)));
-        spawn_heartbeat_thread(w.clone());
+        let _heartbeat_done = spawn_heartbeat_thread(w.clone());
 
         let id_and_os = id_and_oneshots.clone();
         tokio::spawn(async move {

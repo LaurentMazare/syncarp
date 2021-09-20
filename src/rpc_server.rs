@@ -84,12 +84,13 @@ impl RpcServer {
         }
 
         let mut recv_bytes = [0u8; 8];
-        spawn_heartbeat_thread(write.clone());
+        let heartbeat_done = spawn_heartbeat_thread(write.clone());
 
         loop {
             if let Err(err) = read.read_exact(&mut recv_bytes).await {
                 match err.kind() {
                     std::io::ErrorKind::UnexpectedEof => {
+                        heartbeat_done.store(true, std::sync::atomic::Ordering::Relaxed);
                         tracing::debug!("connection closed {:?}", addr);
                         return Ok(());
                     }
