@@ -17,9 +17,7 @@ pub trait JRpc {
         Self::Q: BinProtWrite + Send + Sync,
         Self::R: BinProtRead + Send + Sync,
     {
-        rpc_client
-            .dispatch(Self::RPC_NAME, Self::RPC_VERSION, q)
-            .await
+        rpc_client.dispatch(Self::RPC_NAME, Self::RPC_VERSION, q).await
     }
 }
 

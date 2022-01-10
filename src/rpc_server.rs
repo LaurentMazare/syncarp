@@ -32,10 +32,7 @@ where
                 RpcResult::Error(RpcError::UncaughtExn(sexp))
             }
         };
-        let response = Response {
-            id,
-            data: rpc_result,
-        };
+        let response = Response { id, data: rpc_result };
         ServerMessage::Response(response).binprot_write(buf)?;
         Ok(())
     }
@@ -59,8 +56,7 @@ impl RpcServer {
         T::E: std::error::Error + Send,
     {
         let impl_: Box<dyn ErasedJRpcImpl + Send + Sync> = Box::new(impl_);
-        self.rpc_impls
-            .insert((T::JRpc::RPC_NAME.to_string(), T::JRpc::RPC_VERSION), impl_);
+        self.rpc_impls.insert((T::JRpc::RPC_NAME.to_string(), T::JRpc::RPC_VERSION), impl_);
         self
     }
 
@@ -152,10 +148,7 @@ impl RpcServer {
     pub async fn new<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<Self, Error> {
         let listener = TcpListener::bind(addr).await?;
         tracing::debug!("listening");
-        let rpc_server = RpcServer {
-            rpc_impls: BTreeMap::new(),
-            listener,
-        };
+        let rpc_server = RpcServer { rpc_impls: BTreeMap::new(), listener };
         Ok(rpc_server)
     }
 

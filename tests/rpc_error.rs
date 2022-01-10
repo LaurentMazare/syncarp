@@ -56,9 +56,7 @@ impl JRpc for SetIdCounter {
 async fn rpc_server() -> Result<syncarp::RpcServer, syncarp::Error> {
     let counter = Arc::new(Mutex::new(0));
     let get_unique_id_impl = GetUniqueIdImpl(counter);
-    let rpc_server = syncarp::RpcServer::new("127.0.0.1:0")
-        .await?
-        .add_rpc(get_unique_id_impl);
+    let rpc_server = syncarp::RpcServer::new("127.0.0.1:0").await?.add_rpc(get_unique_id_impl);
     Ok(rpc_server)
 }
 

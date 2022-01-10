@@ -88,11 +88,7 @@ impl RpcClient {
                 }
             }
         });
-        Ok(RpcClient {
-            w,
-            buf,
-            id_and_oneshots,
-        })
+        Ok(RpcClient { w, buf, id_and_oneshots })
     }
 
     // Registers a fresh id and get back both the id and the

@@ -21,9 +21,8 @@ impl syncarp::JRpc for SetIdCounter {
 
 #[tokio::main]
 async fn main() -> Result<(), syncarp::Error> {
-    let subscriber = tracing_subscriber::FmtSubscriber::builder()
-        .with_max_level(tracing::Level::TRACE)
-        .finish();
+    let subscriber =
+        tracing_subscriber::FmtSubscriber::builder().with_max_level(tracing::Level::TRACE).finish();
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
