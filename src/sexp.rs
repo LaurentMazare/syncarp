@@ -1,4 +1,3 @@
-use binprot::BinProtRead;
 use binprot_derive::{BinProtRead, BinProtWrite};
 
 #[derive(BinProtRead, BinProtWrite, Clone, PartialEq)]

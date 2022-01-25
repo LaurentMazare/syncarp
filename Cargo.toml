@@ -14,8 +14,8 @@ readme = "README.md"
 [dependencies]
 async-trait = "0.1.50"
 byteorder = "1.4.3"
-binprot_derive = "0.1"
-binprot = "0.1"
+binprot_derive = "0.1.7"
+binprot = "0.1.7"
 tokio = { version = "1.8.1", features = ["full"] }
 tracing = "0.1.26"
 tracing-subscriber = "0.2.19"
