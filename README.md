@@ -44,3 +44,30 @@ async fn main() -> Result<(), syncarp::Error> {
     Ok(())
 }
 ```
+
+## Example Client/Server
+
+The `examples` directory contains a client and a server implementation in Rust as well as
+their OCaml equivalents. It is possible to start a Rust server and get the OCaml client to
+connect to it via the following:
+
+```bash
+# Start the Rust server.
+cargo run --example server
+
+# Connect with the OCaml client.
+cd examples/ocaml
+dune exec ./rpc_client.exe
+```
+
+Or the other way around:
+```bash
+# Start the OCaml server.
+cd examples/ocaml
+dune exec ./rpc_server.exe
+
+# Connect with the Rust server (to be run from the top directory).
+cargo run --example client
+```
+
+
