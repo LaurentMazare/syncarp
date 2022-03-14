@@ -69,15 +69,7 @@ type u = Int64.t [@@deriving bin_io]
 type v = t [@@deriving bin_io]
 type w = {t: int} [@@deriving bin_io]
 
-let print_shape s =
-  Stdio.printf "%s\n%!" (Bin_prot.Shape.eval s |> Bin_prot.Shape.Canonical.sexp_of_t |> Sexp.to_string);
-  Stdio.printf "%s\n%!" (Bin_prot.Shape.eval_to_digest s|> Bin_prot.Shape.Digest.to_hex)
-
 let () =
-  print_shape bin_shape_t;
-  print_shape bin_shape_u;
-  print_shape bin_shape_v;
-  print_shape bin_shape_w;
   Command.async
     ~summary:"A trivial Async-RPC server"
     (let%map_open.Command port =
