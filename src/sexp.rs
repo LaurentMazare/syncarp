@@ -1,6 +1,7 @@
 use binprot_derive::{BinProtRead, BinProtWrite};
 
-#[derive(BinProtRead, BinProtWrite, Clone, PartialEq)]
+// TODO: Use rsexp instead.
+#[derive(BinProtRead, BinProtWrite, Clone, PartialEq, Eq)]
 pub enum Sexp {
     Atom(String),
     List(Vec<Sexp>),

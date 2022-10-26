@@ -3,7 +3,7 @@ use binprot_derive::{BinProtRead, BinProtWrite};
 
 use crate::sexp::Sexp;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BufferWithLen(pub Vec<u8>);
 
 impl BinProtRead for BufferWithLen {
@@ -27,13 +27,13 @@ impl BinProtWrite for BufferWithLen {
     }
 }
 
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
+#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq, Eq)]
 #[polymorphic_variant]
 pub enum Version {
     Version(i64),
 }
 
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
+#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq, Eq)]
 pub enum RpcError {
     BinIoExn(Sexp),
     ConnectionClosed,
@@ -43,10 +43,10 @@ pub enum RpcError {
     UnknownQueryId(String),
 }
 
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
+#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq, Eq)]
 pub struct Handshake(pub Vec<i64>);
 
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
+#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq, Eq)]
 pub struct Query<RpcTag, T> {
     pub rpc_tag: RpcTag,
     pub version: i64,
@@ -54,19 +54,19 @@ pub struct Query<RpcTag, T> {
     pub data: binprot::WithLen<T>,
 }
 
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
+#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq, Eq)]
 pub enum RpcResult<T> {
     Ok(binprot::WithLen<T>),
     Error(RpcError),
 }
 
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
+#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq, Eq)]
 pub struct Response<T> {
     pub id: i64,
     pub data: RpcResult<T>,
 }
 
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
+#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq, Eq)]
 pub struct ServerQuery {
     pub rpc_tag: String,
     pub version: i64,
@@ -74,26 +74,26 @@ pub struct ServerQuery {
     pub data: BufferWithLen,
 }
 
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
+#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq, Eq)]
 pub enum ServerMessage<R> {
     Heartbeat,
     Query(ServerQuery),
     Response(R),
 }
 
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
+#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq, Eq)]
 pub enum ClientRpcResult {
     Ok(BufferWithLen),
     Error(RpcError),
 }
 
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
+#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq, Eq)]
 pub struct ClientResponse {
     pub id: i64,
     pub data: ClientRpcResult,
 }
 
-#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq)]
+#[derive(BinProtRead, BinProtWrite, Debug, Clone, PartialEq, Eq)]
 pub enum ClientMessage<RpcTag, Q> {
     Heartbeat,
     Query(Query<RpcTag, Q>),
