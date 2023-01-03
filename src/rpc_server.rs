@@ -158,7 +158,7 @@ impl RpcServer {
             let rc = rc.clone();
             let (stream, addr) = self.listener.accept().await?;
             tokio::spawn(async move {
-                if let Err(e) = RpcServer::handle_connection(&*rc, stream, addr).await {
+                if let Err(e) = RpcServer::handle_connection(&rc, stream, addr).await {
                     tracing::info!("error handling connection {:?} {:?}", addr, e);
                 }
             });
