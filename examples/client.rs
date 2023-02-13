@@ -29,12 +29,12 @@ async fn main() -> Result<(), syncarp::Error> {
     let mut rpc_client = syncarp::RpcClient::new("127.0.0.1:8080").await?;
     for i in 1..5 {
         let result = GetUniqueId::dispatch(&mut rpc_client, ()).await;
-        println!("Received: {} {:?}", i, result);
+        println!("Received: {i} {result:?}");
     }
     SetIdCounter::dispatch(&mut rpc_client, 42).await?;
     for i in 1..5 {
         let result = GetUniqueId::dispatch(&mut rpc_client, ()).await;
-        println!("Received: {} {:?}", i, result);
+        println!("Received: {i} {result:?}");
     }
     Ok(())
 }
